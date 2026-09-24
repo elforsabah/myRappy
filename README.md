@@ -1,1 +1,1 @@
-/BmsApiSapTest/swagger/index.html
+Seit 24.09.2026 antwortet http://hws-srv17.hws.vvv.vvv-konzern.net/BmsApiSapTest mit HTTP 404, auch /swagger/index.html und /api/user/healthCheck. Der Server selbst ist erreichbar (200 auf /). Wurde die Test-API gestoppt, verschoben oder umbenannt? Wir brauchen den aktuellen Pfad (Präfix) für den Aufruf aus SAP.
