@@ -1,43 +1,63 @@
-  METHOD log_bms_call.
+  METHOD post_bms_order.
 
-    DATA lv_created_date TYPE dats.
-    DATA lv_log_message  TYPE string.
+    CLEAR: ev_http_status, ev_response.
 
-    lv_created_date = sy-datum.
+    DATA lo_http TYPE REF TO if_http_client.
 
-    " Extract the message field from a JSON error response if present.
-    " BMS error responses follow the pattern {"error":{"message":"..."}}.
-    " For success responses the full response is logged as-is.
-    lv_log_message = iv_response.
+    cl_http_client=>create_by_destination(
+      EXPORTING
+        destination              = iv_destination
+      IMPORTING
+        client                   = lo_http
+      EXCEPTIONS
+        argument_not_found       = 1
+        destination_not_found    = 2
+        destination_no_authority = 3
+        plugin_not_active        = 4
+        internal_error           = 5
+        OTHERS                   = 6 ).
 
-    DATA(lv_msg_start) = find( val = iv_response sub = '"message":"' ).
-    IF lv_msg_start >= 0.
-      lv_msg_start = lv_msg_start + strlen( '"message":"' ).
-      DATA(lv_msg_end) = find( val = iv_response sub = '"' off = lv_msg_start ).
-      IF lv_msg_end > lv_msg_start.
-        lv_log_message = substring( val = iv_response
-                                    off = lv_msg_start
-                                    len = lv_msg_end - lv_msg_start ).
-      ENDIF.
+    IF sy-subrc <> 0.
+      ev_response = |Destination { iv_destination } nicht nutzbar (subrc { sy-subrc })|.
+      RETURN.
     ENDIF.
 
-    " DIRECTION is the caller's: OUTBOUND (default) for the release and the
-    " storno, INBOUND for the confirmation endpoint (ZCL_BMS_EAP_CONF).
-    CALL FUNCTION 'ZWR_BMS_LOG_WRITE'
-      DESTINATION 'NONE'
-      EXPORTING
-        iv_mandt        = sy-mandt
-        iv_created_date = lv_created_date
-        iv_created_time = sy-uzeit
-        iv_created_by   = sy-uname
-        iv_direction    = iv_direction
-        iv_tour_uuid    = iv_tour_uuid
-        iv_service_uuid = iv_service_uuid
-        iv_order_number = iv_order_number
-        iv_endpoint     = iv_endpoint
-        iv_http_status  = iv_http_status
-        iv_request      = iv_request
-        iv_response     = lv_log_message
-        iv_pobjnr       = iv_pobjnr.
+    " The path prefix (/BmsApiSapTest in TI4) is maintained in SM59 on the
+    " destination, not in the coding. CREATE_BY_DESTINATION puts it into
+    " the request URI; SET_REQUEST_URI would overwrite it, so the prefix
+    " is read back first and the endpoint appended.
+    DATA(lv_uri) = lo_http->request->get_header_field( '~request_uri' ).
+    IF lv_uri IS NOT INITIAL
+       AND substring( val = lv_uri off = strlen( lv_uri ) - 1 ) = '/'.
+      lv_uri = substring( val = lv_uri len = strlen( lv_uri ) - 1 ).
+    ENDIF.
+
+    cl_http_utility=>set_request_uri(
+      request = lo_http->request
+      uri     = |{ lv_uri }/api/container/create-order-halle| ).
+
+    lo_http->request->set_method( if_http_request=>co_request_method_post ).
+    lo_http->request->set_content_type( 'application/json' ).
+    lo_http->request->set_header_field( name  = 'Authorization'
+                                        value = iv_bearer_token ).
+    lo_http->request->set_cdata( iv_json ).
+
+    lo_http->send( EXCEPTIONS OTHERS = 4 ).
+    IF sy-subrc <> 0.
+      lo_http->get_last_error( IMPORTING message = ev_response ).
+      lo_http->close( ).
+      RETURN.
+    ENDIF.
+
+    lo_http->receive( EXCEPTIONS OTHERS = 4 ).
+    IF sy-subrc <> 0.
+      lo_http->get_last_error( IMPORTING message = ev_response ).
+      lo_http->close( ).
+      RETURN.
+    ENDIF.
+
+    lo_http->response->get_status( IMPORTING code = ev_http_status ).
+    ev_response = lo_http->response->get_cdata( ).
+    lo_http->close( ).
 
   ENDMETHOD.
